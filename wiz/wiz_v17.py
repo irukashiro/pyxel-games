@@ -41,6 +41,22 @@ class DemonLord(Enemy):
     def __init__(self, x, y):
         super().__init__(x, y, "Demon Lord", 300, 50, 5, 500)
 
+class Equipment:
+    def __init__(self, name, slot, attack=0, defense=0, evasion=0):
+        self.name = name
+        self.slot = slot
+        self.attack = attack
+        self.defense = defense
+        self.evasion = evasion
+
+EQUIPMENT_ITEMS = {
+    "Long Sword": Equipment("Long Sword", "Right Hand", attack=5),
+    "Leather Armor": Equipment("Leather Armor", "Body", defense=5),
+    "Small Shield": Equipment("Small Shield", "Left Hand", defense=3, evasion=2),
+    "Iron Helmet": Equipment("Iron Helmet", "Head", defense=3),
+    "Boots": Equipment("Boots", "Legs", evasion=3)
+}
+
 
 class App:
     def __init__(self):
@@ -58,7 +74,8 @@ class App:
         self.player_max_hp = 100
         self.player_speed = 5
         self.inventory = []
-        self.shop_items = ["Potion", "Fireball Scroll"]
+        self.shop_items = ["Potion", "Fireball Scroll", "Long Sword", "Leather Armor", "Small Shield"]
+
         self.dungeon_maps = {}
         self.enemies = []
         self.current_enemy = None
@@ -67,6 +84,8 @@ class App:
         self.battle_turn = "player"
         self.battle_state = "player_action"
         self.menu_selection = 0
+            # ショップの状態管理用フラグ
+        self.in_shop = False  # ショップを開いているか
         self.in_guild = False  # ギルドウィンドウを開いているか
         self.guild_selection = 0  # ギルドメニューのカーソル位置
         self.current_quest = None  # 現在受注している依頼
@@ -75,7 +94,13 @@ class App:
         self.generate_guild_quests()  # 初期依頼生成
         self.in_guild_quest = False  # 依頼選択ウィンドウが開いているか
         self.guild_quest_selection = 0  # 依頼選択のカーソル位置
-
+        self.equipment = {
+            "Right Hand": None,
+            "Left Hand": None,
+            "Head": None,
+            "Body": None,
+            "Legs": None
+        }
         self.load_floor()
         pyxel.run(self.update, self.draw)
 
@@ -156,8 +181,23 @@ class App:
         self.chest_state = None
         self.chest_selection = 0
 
+    def equip_item(self, slot):
+        available_items = [item for item in self.inventory if item.slot == slot]
+
+        if available_items:
+            selected_item = available_items[0]  # 仮：最初のアイテムを装備
+            self.inventory.remove(selected_item)
+            
+            if self.equipment[slot]:
+                self.inventory.append(self.equipment[slot])  # 古い装備をインベントリに戻す
+            
+            self.equipment[slot] = selected_item
+
+
     def update(self):
-        if self.in_guild:
+        if self.in_shop:
+            self.update_shop()  # **ショップウィンドウの更新**
+        elif self.in_guild:
             self.update_guild()
         elif self.chest_opened and pyxel.btnp(pyxel.KEY_RETURN):
             self.chest_log = ""
@@ -177,19 +217,28 @@ class App:
                 self.update_dungeon()
 
 
+
     def update_menu(self):
+        if not self.inventory:  # インベントリが空ならカーソル操作を無効化
+            self.menu_selection = 0  # カーソル位置をリセット
+            return
+
         if pyxel.btnp(pyxel.KEY_UP):
             self.menu_selection = (self.menu_selection - 1) % len(self.inventory)
         elif pyxel.btnp(pyxel.KEY_DOWN):
             self.menu_selection = (self.menu_selection + 1) % len(self.inventory)
-        elif pyxel.btnp(pyxel.KEY_RETURN) and self.inventory:
+        elif pyxel.btnp(pyxel.KEY_RETURN):
             item = self.inventory.pop(self.menu_selection)
             if item == "Potion":
                 self.player_hp = min(self.player_hp + 20, self.player_max_hp)
 
+            # インベントリが空になったらカーソル位置をリセット
+            if not self.inventory:
+                self.menu_selection = 0
+
     def update_town(self):
         if pyxel.btnp(pyxel.KEY_UP):
-            self.town_menu = (self.town_menu - 1) % 4  # ギルドを追加したので 4 つに変更
+            self.town_menu = (self.town_menu - 1) % 4  # ショップを含める
         elif pyxel.btnp(pyxel.KEY_DOWN):
             self.town_menu = (self.town_menu + 1) % 4
         elif pyxel.btnp(pyxel.KEY_RETURN):
@@ -197,27 +246,44 @@ class App:
                 if self.gold >= 30:
                     self.gold -= 30
                     self.player_hp = self.player_max_hp
-            elif self.town_menu == 1:  # 露天商
-                self.update_shop()
+            elif self.town_menu == 1:  # **露天商（ショップ）**
+                self.in_shop = True  # ショップを開く
+                self.menu_selection = 0  # カーソルリセット
             elif self.town_menu == 2:  # ダンジョン
                 self.in_town = False
                 self.floor = -1
                 self.load_floor()
             elif self.town_menu == 3:  # ギルド
-                self.in_guild = True  # ギルドウィンドウを開く
+                self.in_guild = True  # ギルドを開く
 
 
     def update_shop(self):
         if pyxel.btnp(pyxel.KEY_UP):
-            self.menu_selection = (self.menu_selection - 1) % len(self.shop_items)
+            self.menu_selection = (self.menu_selection - 1) % (len(self.shop_items) + 1)  # 「戻る」を含める
         elif pyxel.btnp(pyxel.KEY_DOWN):
-            self.menu_selection = (self.menu_selection + 1) % len(self.shop_items)
+            self.menu_selection = (self.menu_selection + 1) % (len(self.shop_items) + 1)
         elif pyxel.btnp(pyxel.KEY_RETURN):
-            item = self.shop_items[self.menu_selection]
-            cost = 10 if item == "Potion" else 20
+            if self.menu_selection == len(self.shop_items):  # 「戻る」が選択された場合
+                self.in_shop = False  # ショップを閉じる
+                return
+
+            item_name = self.shop_items[self.menu_selection]
+            item_prices = {
+                "Potion": 10,
+                "Fireball Scroll": 20,
+                "Long Sword": 50,
+                "Leather Armor": 50,
+                "Small Shield": 30
+            }
+            cost = item_prices.get(item_name, 20)  # **辞書にない場合はデフォルト値 20 を設定**
+
             if self.gold >= cost:
                 self.gold -= cost
-                self.inventory.append(item)
+                if item_name in EQUIPMENT_ITEMS:
+                    self.inventory.append(EQUIPMENT_ITEMS[item_name])  # 装備アイテムとして追加
+                else:
+                    self.inventory.append(item_name)  # 通常アイテムとして追加
+
 
     def update_guild(self):
         if self.in_guild_quest:
@@ -408,6 +474,29 @@ class App:
                 else:
                     self.battle_state = "player_action"
 
+    def update_equip(self):
+        equipable_items = [item for item in self.inventory if isinstance(item, Equipment)]
+        
+        if not equipable_items:  # 装備できるアイテムがない場合はカーソルをリセットして処理を抜ける
+            self.menu_selection = 0
+            return
+
+        if pyxel.btnp(pyxel.KEY_UP):
+            self.menu_selection = (self.menu_selection - 1) % len(equipable_items)
+        elif pyxel.btnp(pyxel.KEY_DOWN):
+            self.menu_selection = (self.menu_selection + 1) % len(equipable_items)
+        elif pyxel.btnp(pyxel.KEY_RETURN):
+            slot = list(self.equipment.keys())[self.menu_selection]
+            self.equip_item(slot)
+
+            # インベントリが空になったらカーソル位置をリセット
+            if not equipable_items:
+                self.menu_selection = 0
+
+
+
+
+
     def enemy_turn(self):
         damage = random.randint(5, 15)
         self.player_hp -= damage
@@ -451,18 +540,22 @@ class App:
             self.draw_menu()
         elif self.in_battle:
             self.draw_battle()
-        elif self.in_guild:  # ギルドウィンドウの表示
-            self.draw_guild()
+        elif self.in_shop:  # **ショップウィンドウの表示**
+            self.draw_shop()
         elif self.in_town:
             self.draw_town()
         else:
             self.draw_dungeon()
 
+
+
     def draw_menu(self):
         pyxel.rect(10, 10, 236, 236, 1)
         pyxel.text(20, 20, "-- Menu --", 7)
         pyxel.text(20, 40, f"HP: {self.player_hp}/{self.player_max_hp}", 7)
-        
+        pyxel.text(20, 60, f"Attack: {self.get_total_attack()}", 7)
+        pyxel.text(20, 80, f"Defense: {self.get_total_defense()}", 7)
+
         # HPバー追加
         player_hp_ratio = max(self.player_hp / self.player_max_hp, 0)
         pyxel.rect(20, 50, 100, 5, 8)  # 背景（赤）
@@ -474,6 +567,17 @@ class App:
             prefix = "> " if i == self.menu_selection else "  "
             pyxel.text(40, 110 + i * 10, prefix + item, 7)
 
+        pyxel.text(20, 100, "Equipment:", 7)
+        for i, (slot, item) in enumerate(self.equipment.items()):
+            pyxel.text(40, 120 + i * 10, f"{slot}: {item.name if item else 'None'}", 7)
+
+    def get_total_attack(self):
+        return sum(item.attack for item in self.equipment.values() if item)
+
+    def get_total_defense(self):
+        return sum(item.defense for item in self.equipment.values() if item)
+
+
     def draw_town(self):
         options = ["Inn", "Shop", "Dungeon", "Guild"]
         pyxel.text(40, 20, "-- Town --", 7)
@@ -481,6 +585,20 @@ class App:
             prefix = "> " if i == self.town_menu else "  "
             pyxel.text(20, 80 + i * 20, prefix + option, 7)
         pyxel.text(5, 240, f"Gold: {self.gold}", 7)
+
+    def draw_shop(self):
+        pyxel.rect(40, 40, 180, 120, 1)  # 背景
+        pyxel.rectb(40, 40, 180, 120, 7)  # 枠線
+        pyxel.text(90, 50, "-- Shop --", 7)
+
+        for i, item in enumerate(self.shop_items):
+            prefix = "> " if i == self.menu_selection else "  "
+            pyxel.text(60, 70 + i * 10, f"{prefix}{item}", 7)
+
+        pyxel.text(60, 70 + len(self.shop_items) * 10, "> back" if self.menu_selection == len(self.shop_items) else "  戻る", 7)
+        pyxel.text(50, 150, f"Gold: {self.gold}", 7)
+
+
 
     def draw_guild(self):
         if self.in_guild_quest:
